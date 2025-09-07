@@ -54,7 +54,12 @@ def gen_prompt():
 def gen_metadata(prompt):
     try:
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5:generateContent"
-        req_text = f"Given this prompt: {prompt}\nReturn JSON: { '{' }"title":"<short title up to 60 chars>","description":"<brief description>","tags":["tag1","tag2"],"hashtags":["#tag"]{ '}' }"
+        req_text = f"""Given this prompt: {prompt}
+Return JSON: {{"title":"<short title up to 60 chars>",
+"description":"<brief description>",
+"tags":["tag1","tag2"],
+"hashtags":["#tag"]}}"""
+        
         payload = {"contents": [{"parts": [{"text": req_text}]}]}
         r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=20)
         r.raise_for_status()
