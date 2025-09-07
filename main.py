@@ -36,7 +36,7 @@ def log(msg):
 
 def gen_prompt():
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
         payload = {"contents": [{"parts": [{"text": "Generate a unique, catchy title and 1-line prompt for a YouTube Short (<=10 words)."}]}]}
         r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=20)
         r.raise_for_status()
@@ -53,13 +53,12 @@ def gen_prompt():
 
 def gen_metadata(prompt):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
         req_text = f"""Given this prompt: {prompt}
 Return JSON: {{"title":"<short title up to 60 chars>",
 "description":"<brief description>",
 "tags":["tag1","tag2"],
 "hashtags":["#tag"]}}"""
-        
         payload = {"contents": [{"parts": [{"text": req_text}]}]}
         r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=20)
         r.raise_for_status()
@@ -83,8 +82,8 @@ Return JSON: {{"title":"<short title up to 60 chars>",
 
 def try_gemini_video(prompt):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-video:generateVideo"
-        payload = {"prompt": prompt, "config": {"duration_seconds": 15, "resolution": "1080x1920"}}
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent"
+        payload = {"contents": [{"parts": [{"text": f"Generate a 15 second vertical video (1080x1920) for: {prompt}"}]}]}
         r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=120)
         if r.ok:
             data = r.json()
@@ -116,15 +115,11 @@ def try_gemini_video(prompt):
 
 def try_gemini_image(prompt):
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-image:generateImage"
-        payload = {"prompt": prompt}
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+        payload = {"contents": [{"parts": [{"text": f"Generate a vertical image 1080x1920 for: {prompt}"}]}]}
         r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=60)
         if r.ok:
             data = r.json()
-            if 'image' in data and isinstance(data['image'], str):
-                out = OUTPUTS / 'gemini_img.jpg'
-                out.write_bytes(base64.b64decode(data['image']))
-                return str(out)
             cand = data.get('candidates') or []
             for c in cand:
                 parts = c.get('content', {}).get('parts', [])
@@ -135,13 +130,6 @@ def try_gemini_image(prompt):
                         out = OUTPUTS / 'gemini_img.jpg'
                         out.write_bytes(base64.b64decode(b64))
                         return str(out)
-            img_url = data.get('image_url') or data.get('url')
-            if img_url:
-                resp = requests.get(img_url, timeout=60)
-                if resp.ok:
-                    out = OUTPUTS / 'gemini_img.jpg'
-                    out.write_bytes(resp.content)
-                    return str(out)
     except Exception as e:
         log('Gemini image error: ' + str(e))
         log(traceback.format_exc())
@@ -229,3 +217,4 @@ def job():
 
 if __name__ == '__main__':
     job()
+        
