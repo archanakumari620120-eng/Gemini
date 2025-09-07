@@ -1,226 +1,119 @@
-# main.py - Gemini-first uploader (no manual fallback)
-import os, time, json, base64, subprocess, requests, traceback
-from pathlib import Path
-from moviepy.editor import ImageClip, AudioFileClip
-from PIL import Image
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+import os
+import google.generativeai as genai
 from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+import json
+import random
+import time
+from moviepy.editor import *
 
-OUTPUTS = Path("outputs")
-OUTPUTS.mkdir(exist_ok=True)
-TOKEN_PATH = "token.json"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# --- API Configuration ---
+# Load secrets from environment variables
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+CLIENT_SECRET_JSON_STR = os.getenv("CLIENT_SECRET_JSON")
+TOKEN_JSON_STR = os.getenv("TOKEN_JSON")
 
-if not GEMINI_API_KEY and os.path.exists("config.json"):
+# Set up Gemini AI
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-pro')
+
+# Set up YouTube API
+YOUTUBE_API_SERVICE_NAME = "youtube"
+YOUTUBE_API_VERSION = "v3"
+SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+
+def get_authenticated_service():
+    """Authenticates with YouTube using the token from GitHub Secrets."""
+    creds_info = json.loads(TOKEN_JSON_STR)
+    credentials = Credentials.from_authorized_user_info(info=creds_info, scopes=SCOPES)
+    return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, credentials=credentials)
+
+def generate_video_info_with_gemini():
+    """Generates unique video details (title, description, tags) using Gemini AI."""
+    prompt = f"Generate a creative and engaging YouTube video concept. Provide a concise title, a detailed description, and a list of 5-7 relevant tags and 3 hashtags. The topic should be something interesting for a general audience, like 'life hacks', 'fun facts', or 'daily motivation'. Make sure the output is easy to parse. Example output format: Title:..., Description:..., Tags:..., Hashtags:..."
+    
+    response = model.generate_content(prompt)
+    generated_text = response.text
+
+    # Simple parsing to extract the required info
     try:
-        cfg = json.load(open("config.json"))
-        GEMINI_API_KEY = cfg.get("GEMINI_API_KEY") or cfg.get("gemini_api_key")
-    except Exception:
-        pass
+        title = generated_text.split("Title:")[1].split("Description:")[0].strip()
+        description = generated_text.split("Description:")[1].split("Tags:")[0].strip()
+        tags_str = generated_text.split("Tags:")[1].split("Hashtags:")[0].strip()
+        hashtags_str = generated_text.split("Hashtags:")[1].strip()
 
-if not os.path.exists(TOKEN_PATH):
-    raise FileNotFoundError("token.json missing. Add via secret TOKEN_JSON")
+        # Convert tags string to a list
+        tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()]
+        
+        return title, description, tags, hashtags_str
 
-creds = Credentials.from_authorized_user_file(TOKEN_PATH)
+    except IndexError:
+        print("Parsing failed, using fallback values.")
+        return (
+            f"AI Generated Video {int(time.time())}",
+            "An interesting video generated automatically by an AI model!",
+            ["AI", "Daily Video", "Gemini AI"],
+            "#aigenerated #dailyvideos #gemini"
+        )
 
-# Pillow resample fix
-try:
-    from PIL import Image as PILImage
-    RESAMPLE = PILImage.Resampling.LANCZOS if hasattr(PILImage, "Resampling") else PILImage.ANTIALIAS
-except Exception:
-    RESAMPLE = None
+def create_simple_video(title, description):
+    """Generates a simple video with text overlay as a placeholder."""
+    # In a real-world scenario, you would integrate more advanced AI for visuals and voiceover.
+    # This is a basic example using MoviePy.
+    
+    video_text = f"Title: {title}\n\n{description}"
+    
+    txt_clip = TextClip(video_text, fontsize=40, color='white', bg_color='black', 
+                        size=(1920, 1080), method='caption').set_duration(30)
+    
+    output_file = "ai_generated_video.mp4"
+    txt_clip.write_videofile(output_file, fps=24, codec="libx264")
+    
+    return output_file
 
-def log(msg):
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
-
-def gen_prompt():
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5:generateContent"
-        payload = {"contents": [{"parts": [{"text": "Generate a unique, catchy title and 1-line prompt for a YouTube Short (<=10 words)."}]}]}
-        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        cand = data.get('candidates') or []
-        if cand:
-            txt = cand[0].get('content', {}).get('parts', [])[0].get('text')
-            if txt:
-                return txt.strip()
-    except Exception as e:
-        log('Gemini prompt error: ' + str(e))
-        log(traceback.format_exc())
-    return f"AI Short {int(time.time())}"
-
-def gen_metadata(prompt):
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5:generateContent"
-        req_text = f"Given this prompt: {prompt}\nReturn JSON: { '{' }"title":"<short title up to 60 chars>","description":"<brief description>","tags":["tag1","tag2"],"hashtags":["#tag"]{ '}' }"
-        payload = {"contents": [{"parts": [{"text": req_text}]}]}
-        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        cand = data.get('candidates') or []
-        if cand:
-            txt = cand[0].get('content', {}).get('parts', [])[0].get('text')
-            if txt:
-                import re
-                m = re.search(r'\{.*\}', txt, flags=re.S)
-                if m:
-                    try:
-                        return json.loads(m.group(0))
-                    except Exception:
-                        pass
-                return {'title': txt[:60], 'description': txt, 'tags': ['AI','shorts'], 'hashtags': []}
-    except Exception as e:
-        log('Gemini metadata error: ' + str(e))
-        log(traceback.format_exc())
-    return {'title': f'AI Short {int(time.time())}', 'description': prompt, 'tags': ['AI','shorts'], 'hashtags': []}
-
-def try_gemini_video(prompt):
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-video:generateVideo"
-        payload = {"prompt": prompt, "config": {"duration_seconds": 15, "resolution": "1080x1920"}}
-        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=120)
-        if r.ok:
-            data = r.json()
-            if 'video' in data and isinstance(data['video'], str):
-                out = OUTPUTS / 'gemini_video.mp4'
-                out.write_bytes(base64.b64decode(data['video']))
-                return str(out)
-            cand = data.get('candidates') or []
-            for c in cand:
-                parts = c.get('content', {}).get('parts', [])
-                for p in parts:
-                    inline = p.get('inlineData') or {}
-                    b64 = inline.get('data')
-                    if b64:
-                        out = OUTPUTS / 'gemini_video.mp4'
-                        out.write_bytes(base64.b64decode(b64))
-                        return str(out)
-            urlv = data.get('video_url') or data.get('url')
-            if urlv:
-                resp = requests.get(urlv, timeout=60)
-                if resp.ok:
-                    out = OUTPUTS / 'gemini_video.mp4'
-                    out.write_bytes(resp.content)
-                    return str(out)
-    except Exception as e:
-        log('Gemini video error: ' + str(e))
-        log(traceback.format_exc())
-    return None
-
-def try_gemini_image(prompt):
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-image:generateImage"
-        payload = {"prompt": prompt}
-        r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=60)
-        if r.ok:
-            data = r.json()
-            if 'image' in data and isinstance(data['image'], str):
-                out = OUTPUTS / 'gemini_img.jpg'
-                out.write_bytes(base64.b64decode(data['image']))
-                return str(out)
-            cand = data.get('candidates') or []
-            for c in cand:
-                parts = c.get('content', {}).get('parts', [])
-                for p in parts:
-                    inline = p.get('inlineData') or {}
-                    b64 = inline.get('data')
-                    if b64:
-                        out = OUTPUTS / 'gemini_img.jpg'
-                        out.write_bytes(base64.b64decode(b64))
-                        return str(out)
-            img_url = data.get('image_url') or data.get('url')
-            if img_url:
-                resp = requests.get(img_url, timeout=60)
-                if resp.ok:
-                    out = OUTPUTS / 'gemini_img.jpg'
-                    out.write_bytes(resp.content)
-                    return str(out)
-    except Exception as e:
-        log('Gemini image error: ' + str(e))
-        log(traceback.format_exc())
-    return None
-
-def download_music(query='No Copyright background music'):
-    out = OUTPUTS / 'music.%(ext)s'
-    cmd = ['yt-dlp', '--quiet', '-x', '--audio-format', 'mp3', '-o', str(out), f'ytsearch1:{query}']
-    try:
-        subprocess.run(cmd, check=True)
-        for f in OUTPUTS.iterdir():
-            if f.suffix.lower() in ('.mp3', '.m4a', '.wav'):
-                return str(f)
-    except Exception as e:
-        log('yt-dlp error: ' + str(e))
-    return None
-
-def build_video_from_image(img_path, music_path, duration=15):
-    try:
-        img = Image.open(img_path).convert('RGB')
-        if RESAMPLE:
-            img = img.resize((1080,1920), RESAMPLE)
-        else:
-            img = img.resize((1080,1920))
-        frame = OUTPUTS / 'frame.jpg'
-        img.save(frame, quality=95)
-        clip = ImageClip(str(frame)).set_duration(duration)
-        audio = AudioFileClip(music_path).subclip(0, duration)
-        clip = clip.set_audio(audio)
-        out = OUTPUTS / f'short_{int(time.time())}.mp4'
-        clip.write_videofile(str(out), fps=30, codec='libx264', audio_codec='aac')
-        return str(out)
-    except Exception as e:
-        log('Build error: ' + str(e))
-        log(traceback.format_exc())
-        return None
-
-def upload_to_youtube(video_path, metadata):
-    try:
-        yt = build('youtube','v3', credentials=creds)
-        body = {
-            'snippet': {
-                'title': metadata.get('title'),
-                'description': metadata.get('description'),
-                'tags': metadata.get('tags') + metadata.get('hashtags', [])
-            },
-            'status': {'privacyStatus': 'public'}
+def upload_video_to_youtube(youtube, file_path, title, description, tags):
+    """Uploads the video to YouTube."""
+    full_description = f"{description}\n\n{' '.join(tags)}" # Add hashtags to description
+    
+    body = {
+        'snippet': {
+            'title': title,
+            'description': full_description,
+            'tags': tags,
+            'categoryId': '22'  # Category ID for "People & Blogs"
+        },
+        'status': {
+            'privacyStatus': 'public' # 'public', 'private', or 'unlisted'
         }
-        media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-        req = yt.videos().insert(part='snippet,status', body=body, media_body=media)
-        log('Uploading...')
-        resp = req.execute()
-        log('Uploaded id: ' + str(resp.get('id')))
-        return resp.get('id')
+    }
+
+    insert_request = youtube.videos().insert(
+        part="snippet,status",
+        body=body,
+        media_body=file_path
+    )
+    
+    print(f"Uploading video with title: {title}")
+    response = insert_request.execute()
+    print(f"Video uploaded successfully! Video ID: {response.get('id')}")
+    return response
+
+if __name__ == "__main__":
+    try:
+        # Step 1: Get YouTube authenticated service
+        youtube = get_authenticated_service()
+        
+        # Step 2: Generate unique video details
+        title, description, tags, hashtags = generate_video_info_with_gemini()
+        
+        # Step 3: Create the video file
+        video_file = create_simple_video(title, description)
+        
+        # Step 4: Upload the video to YouTube
+        # Add hashtags to tags for YouTube upload
+        upload_video_to_youtube(youtube, video_file, title, description + " " + hashtags, tags)
+        
+        print("Video generation and upload process completed successfully.")
+
     except Exception as e:
-        log('Upload error: ' + str(e))
-        log(traceback.format_exc())
-        return None
-
-def job():
-    log('=== JOB START ===')
-    prompt = gen_prompt()
-    log('Prompt: ' + prompt)
-    metadata = gen_metadata(prompt)
-    video = try_gemini_video(prompt)
-    if video:
-        log('Got Gemini video.')
-        upload_to_youtube(video, metadata)
-        log('=== JOB END ===')
-        return
-    img = try_gemini_image(prompt)
-    if not img:
-        log('Gemini image failed. Aborting (no manual fallback).')
-        return
-    music = download_music(prompt + ' No Copyright background music')
-    if not music:
-        log('Music download failed. Aborting.')
-        return
-    video = build_video_from_image(img, music, duration=15)
-    if not video:
-        log('Video build failed.')
-        return
-    upload_to_youtube(video, metadata)
-    log('=== JOB END ===')
-
-if __name__ == '__main__':
-    job()
+        print(f"An error occurred: {e}")
