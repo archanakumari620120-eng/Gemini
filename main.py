@@ -178,10 +178,6 @@ def upload_to_youtube(video_path, metadata):
     try:
         yt = build('youtube','v3', credentials=creds)
         body = {
-            'snippet': {
-                'title': metadata.get('title'),
-                'description': metadata.get('description'),
-                'tags': metadata.get('tags')} 
             'status': {'privacyStatus': 'public'}
         }
         media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
