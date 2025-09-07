@@ -182,7 +182,7 @@ def upload_to_youtube(video_path, metadata):
                 'title': metadata.get('title'),
                 'description': metadata.get('description'),
                 'tags': metadata.get('tags') + metadata.get('hashtags', [])
-            },
+            }
             'status': {'privacyStatus': 'public'}
         }
         media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
