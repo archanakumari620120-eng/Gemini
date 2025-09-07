@@ -1,10 +1,3 @@
-                        size=(1920, 1080), method='caption').set_duration(30)
-    
-    output_file = "ai_generated_video.mp4"
-    txt_clip.write_videofile(output_file, fps=24, codec="libx264")
-    
-    return output_file
-
 import os
 import google.generativeai as genai
 from google.oauth2.credentials import Credentials
