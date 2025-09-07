@@ -2,10 +2,8 @@ name: YouTube Auto Uploader
 
 on:
   schedule:
-    # Runs every 5 hours
-    # The cron expression '0 */5 * * *' means "at minute 0 past every 5th hour".
     - cron: '0 */5 * * *'
-  workflow_dispatch: # This allows you to manually trigger the workflow from the GitHub UI
+  workflow_dispatch:
 
 jobs:
   build-and-upload:
@@ -25,12 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           sudo apt-get update
-          sudo apt-get install -y ffmpeg # moviepy requires ffmpeg
+          sudo apt-get install -y ffmpeg
 
       - name: Run the main Python script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
           TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
         run: python main.py
         
