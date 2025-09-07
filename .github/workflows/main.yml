@@ -1,31 +1,36 @@
-name: build
+name: YouTube Auto Uploader
+
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 */5 * * *"
+    # Runs every 5 hours
+    # The cron expression '0 */5 * * *' means "at minute 0 past every 5th hour".
+    - cron: '0 */5 * * *'
+  workflow_dispatch: # This allows you to manually trigger the workflow from the GitHub UI
+
 jobs:
-  build:
+  build-and-upload:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: '3.x'
+
       - name: Install dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install --prefer-binary -r requirements.txt
-      - name: Write secrets to files
-        env:
-          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
-        run: |
-          echo "$TOKEN_JSON" > token.json
-          echo "$CLIENT_SECRET_JSON" > client_secret.json
-      - name: Run script
+          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg # moviepy requires ffmpeg
+
+      - name: Run the main Python script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
         run: python main.py
+        
