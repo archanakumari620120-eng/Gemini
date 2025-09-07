@@ -1,4 +1,5 @@
 moviepy==1.0.3
+google-generativeai
 Pillow>=10.0.0
 google-api-python-client>=2.129.0
 google-auth>=2.35.0
