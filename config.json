@@ -1,15 +1,7 @@
 {
-  "GEMINI_API_KEY": "GEMINI_API_KEY",
-  "HF_API_KEY": "HF_API_KEY",
-  "youtube": {
-    "privacy_status": "public",
-    "category_id": "22",
-    "default_tags": [
-      "AI",
-      "Shorts"
-    ]
-  },
-  "video_generation": {
-    "duration_seconds": 15
-  }
+  "topic": "Top AI tools 2025",
+  "video_count": 3,
+  "video_duration": 60,
+  "auto_upload": true,
+  "upload_interval_minutes": 60
 }
