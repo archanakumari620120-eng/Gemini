@@ -1,100 +1,118 @@
-# main.py — Final working version with Gemini + HF + fallback
-import os, time, json, random, traceback, requests
-from pathlib import Path
-from PIL import Image
+import os, json, base64, time, requests
+from openai import OpenAI
 from moviepy.editor import ImageClip, AudioFileClip
+import pyttsx3
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
+import schedule
 
-try:
-    import google.genai as genai
-    HAVE_GEMINI_LIB = True
-except Exception:
-    HAVE_GEMINI_LIB = False
+# --- Config ---
+config = json.load(open("config.json"))
+topic = config["topic"]
+video_count = config["video_count"]
+video_duration = config["video_duration"]
+auto_upload = config.get("auto_upload", True)
 
-with open("config.json","r") as f:
-    CONFIG=json.load(f)
+# --- Secrets / Env ---
+gemini_api_key = os.environ.get("GEMINI_API_KEY")
+huggingface_token = os.environ.get("HUGGINGFACE_TOKEN")
+client_secret_file = "client_secret.json"
+token_file = "token.json"
 
-OUTPUTS=Path("outputs");OUTPUTS.mkdir(exist_ok=True)
-IMAGES_DIR=Path("images");MUSIC_DIR=Path("music")
-TOKEN_FILE="token.json"
+client = OpenAI(api_key=gemini_api_key)
+os.makedirs("assets/images", exist_ok=True)
+os.makedirs("assets/voices", exist_ok=True)
+os.makedirs("assets/videos", exist_ok=True)
 
-if hasattr(Image,"Resampling"):
-    RESAMPLE=Image.Resampling.LANCZOS
-else:
-    RESAMPLE=Image.ANTIALIAS
+# --- HuggingFace Image ---
+def generate_image_hf(prompt, file_path):
+    api_url = "https://api-inference.huggingface.co/models/stable-diffusion-v1-5"
+    headers = {"Authorization": f"Bearer {huggingface_token}"}
+    payload = {"inputs": prompt}
+    resp = requests.post(api_url, headers=headers, json=payload)
+    if resp.status_code == 200:
+        with open(file_path, "wb") as f:
+            f.write(resp.content)
+        print(f"HuggingFace image generated: {file_path}")
+    else:
+        print("HF image generation failed:", resp.text)
 
-creds=Credentials.from_authorized_user_file(TOKEN_FILE)
+# --- Automation Task ---
+def run_automation():
+    print("Starting Automation Cycle...")
 
-def log(s): print(f"[{time.strftime('%H:%M:%S')}] {s}",flush=True)
+    # 1️⃣ Scripts
+    scripts = []
+    for _ in range(video_count):
+        resp = client.chat.completions.create(
+            model="gemini-1.5",
+            messages=[{"role": "user", "content": f"Write a {video_duration}-second engaging YouTube Short script on '{topic}'."}]
+        )
+        scripts.append(resp.choices[0].message.content)
 
-def safe_write(path,b):
-    with open(path,"wb") as f:f.write(b)
+    # 2️⃣ Images
+    for i, script in enumerate(scripts):
+        image_file = f"assets/images/image_{i}.png"
+        try:
+            response = client.images.generate(
+                model="models/image-generator-1",
+                prompt=f"{topic}, cinematic, high detail, 1080x1920",
+                size="1080x1920"
+            )
+            image_bytes = base64.b64decode(response.data[0].b64_json)
+            with open(image_file, "wb") as f:
+                f.write(image_bytes)
+            print(f"Gemini image generated: {image_file}")
+        except Exception as e:
+            print("Gemini failed, using HuggingFace:", e)
+            generate_image_hf(f"{topic}, cinematic, high detail, 1080x1920", image_file)
 
-def get_prompt():
-    try:
-        if HAVE_GEMINI_LIB:
-            genai.configure(api_key=CONFIG.get("GEMINI_API_KEY"))
-            client=genai.Client()
-            r=client.generate_text(model="gemini-2.5",prompt="Give a short idea for a YouTube Short (<=12 words).")
-            t=getattr(r,"text",None)
-            if t:return t.strip()
-        else:
-            k=CONFIG.get("GEMINI_API_KEY")
-            if k:
-                u="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5:generateContent"
-                p={"contents":[{"parts":[{"text":"Give a short idea for a YouTube Short (<=12 words)."}]}]}
-                r=requests.post(u,params={"key":k},json=p,timeout=20)
-                d=r.json();c=d.get("candidates") or []
-                if c:txt=c[0]["content"]["parts"][0]["text"];return txt.strip()
-    except Exception as e: log("Prompt fail "+str(e))
-    return random.choice(["Quick hack tip","Amazing space fact","Motivational quote","Funny joke"])
+    # 3️⃣ Voice + Video
+    engine = pyttsx3.init()
+    for i, script in enumerate(scripts):
+        voice_file = f"assets/voices/voice_{i}.mp3"
+        engine.save_to_file(script, voice_file)
+        engine.runAndWait()
 
-def gen_hf_image(prompt):
-    try:
-        token=CONFIG.get("HF_API_KEY")
-        if not token:return None
-        url="https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2"
-        h={"Authorization":f"Bearer {token}"}
-        r=requests.post(url,headers=h,json={"inputs":prompt},timeout=60)
-        if r.status_code==200:
-            out=OUTPUTS/"hf_img.jpg";safe_write(out,r.content);return str(out)
-    except Exception as e: log("HF fail "+str(e))
-    return None
+        video_file = f"assets/videos/video_{i}.mp4"
+        clip = ImageClip(f"assets/images/image_{i}.png", duration=video_duration)
+        audio = AudioFileClip(voice_file)
+        final = clip.set_audio(audio)
+        final.write_videofile(video_file, fps=24)
+        print(f"Video created: {video_file}")
 
-def pick_manual_image():
-    imgs=[p for p in IMAGES_DIR.iterdir() if p.suffix.lower() in(".jpg",".png",".jpeg")] if IMAGES_DIR.exists() else []
-    return str(random.choice(imgs)) if imgs else None
+    # 4️⃣ YouTube Upload
+    if auto_upload:
+        creds = Credentials.from_authorized_user_file(token_file, ["https://www.googleapis.com/auth/youtube.upload"])
+        youtube = build("youtube", "v3", credentials=creds)
 
-def pick_music():
-    mus=[p for p in MUSIC_DIR.iterdir() if p.suffix.lower() in(".mp3",".wav")] if MUSIC_DIR.exists() else []
-    return str(random.choice(mus)) if mus else None
+        def upload_video(file_path, title):
+            request = youtube.videos().insert(
+                part="snippet,status",
+                body={
+                    "snippet": {"title": title, "description": f"Check out {topic}!", "tags": ["AI","Tech","Shorts"]},
+                    "status": {"privacyStatus": "public"}
+                },
+                media_body=file_path
+            )
+            response = request.execute()
+            print(f"Uploaded: {title}")
 
-def build_video(img,music,duration=15):
-    img2=Image.open(img).convert("RGB").resize((1080,1920),RESAMPLE)
-    fixed=OUTPUTS/"frame.jpg";img2.save(fixed)
-    clip=ImageClip(str(fixed)).set_duration(duration)
-    audio=AudioFileClip(music).subclip(0,duration)
-    clip=clip.set_audio(audio)
-    out=OUTPUTS/f"short_{int(time.time())}.mp4"
-    clip.write_videofile(str(out),fps=30,codec="libx264",audio_codec="aac")
-    return str(out)
+        for i, vf in enumerate(sorted(os.listdir("assets/videos"))):
+            upload_video(f"assets/videos/{vf}", f"{topic} Short {i}")
 
-def upload(video,prompt):
-    yt=build("youtube","v3",credentials=creds)
-    body={"snippet":{"title":prompt[:55],"description":prompt+"\nAuto","tags":["AI","Shorts"]},"status":{"privacyStatus":"public"}}
-    req=yt.videos().insert(part="snippet,status",body=body,media_body=MediaFileUpload(video))
-    r=req.execute();log("Uploaded video id "+r.get("id","?"))
+    # 5️⃣ Clean up
+    for folder in ["images","voices","videos"]:
+        folder_path = f"assets/{folder}"
+        for f in os.listdir(folder_path):
+            os.remove(os.path.join(folder_path, f))
+    print("Automation cycle completed!")
 
-def job():
-    log("=== JOB START ===")
-    prompt=get_prompt();log("Prompt: "+prompt)
-    img=gen_hf_image(prompt) or pick_manual_image()
-    music=pick_music()
-    if not img or not music:log("No assets");return
-    video=build_video(img,music,int(CONFIG.get("video_generation",{}).get("duration_seconds",15)))
-    if video: upload(video,prompt)
-    log("=== JOB END ===")
+# --- Scheduler for Local PC ---
+schedule.every(config.get("upload_interval_minutes", 60)).minutes.do(run_automation)
 
-if __name__=="__main__": job()
+print("Scheduler started. Press Ctrl+C to stop.")
+while True:
+    schedule.run_pending()
+    time.sleep(10)
+        
