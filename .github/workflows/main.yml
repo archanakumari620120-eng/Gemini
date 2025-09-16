@@ -33,10 +33,9 @@ jobs:
         echo "$CLIENT_SECRET_JSON" > client_secret.json
         echo "$TOKEN_JSON" > token.json
 
-    - name: Run video generation + upload
-        run: |
-          echo "✅ Script started..."
-          python main.py
+    - name: Run Full Automation
+      run: python main.py
+
     - name: Clean up temp files
       run: |
         rm -f client_secret.json
