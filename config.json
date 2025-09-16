@@ -1,0 +1,15 @@
+{
+  "GEMINI_API_KEY": "YOUR_GEMINI_API_KEY",
+  "HF_API_KEY": "YOUR_HF_API_KEY",
+  "youtube": {
+    "privacy_status": "public",
+    "category_id": "22",
+    "default_tags": [
+      "AI",
+      "Shorts"
+    ]
+  },
+  "video_generation": {
+    "duration_seconds": 15
+  }
+}
