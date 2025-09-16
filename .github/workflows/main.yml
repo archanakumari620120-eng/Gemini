@@ -1,41 +1,46 @@
-name: build
+name: YouTube Shorts Automation
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */5 * * *"
+    - cron: "0 6 * * *"
 
 jobs:
-  build:
+  run-automation:
     runs-on: ubuntu-latest
 
+    env:
+      CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+      TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update && sudo apt-get install -y ffmpeg
-          python -m pip install --upgrade pip
-          pip install --prefer-binary -r requirements.txt
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Write secrets to files
-        env:
-          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
-          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
-          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
-        run: |
-          echo "$TOKEN_JSON" > token.json
-          echo "$CLIENT_SECRET_JSON" > client_secret.json
-          echo "$CONFIG_JSON" > config.json
+    - name: Save secrets to files
+      run: |
+        echo "$CLIENT_SECRET_JSON" > client_secret.json
+        echo "$TOKEN_JSON" > token.json
 
-      - name: Run script
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python main.py
+    - name: Run Full Automation
+      run: python scripts/full_automation_combined.py
+
+    - name: Clean up temp files
+      run: |
+        rm -f client_secret.json
+        rm -f token.json
+        rm -rf assets/images/*
+        rm -rf assets/voices/*
+        rm -rf assets/videos/*
+        
