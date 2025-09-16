@@ -33,9 +33,7 @@ jobs:
         echo "$CLIENT_SECRET_JSON" > client_secret.json
         echo "$TOKEN_JSON" > token.json
 
-    - name: Run Full Automation
-      run: python scripts/full_automation_combined.py
-
+    - 
     - name: Clean up temp files
       run: |
         rm -f client_secret.json
